@@ -336,18 +336,55 @@
     </div>
 
     {{-- Notes & Footer --}}
+    @php
+        // ambil status dan normalisasi
+        $statusRaw = $order->status ?? 'UNPAID';
+        $status = strtoupper(trim($statusRaw));
+
+        // kontak fallback (escape nanti saat digunakan)
+        $contactPlain = $order->provider_contact ?? $order->customer_contact ?? 'tim layanan pelanggan';
+        $contact = e($contactPlain);
+
+        // mapping pesan (HTML kecil — semua variabel di-escape)
+        $messages = [
+            'UNPAID' => "<p style=\"margin:0 0 6px 0;\">Invoice ini <strong>BELUM DIBAYAR</strong>. Silakan selesaikan pembayaran agar pesanan dapat diproses. Jika butuh bantuan, hubungi <strong>KONTAK ADMIN</strong>.</p>",
+            'PENDING' => "<p style=\"margin:0 0 6px 0;\">Pembayaran sedang <strong>MENUNGGU KONFIRMASI</strong>. Kami akan menginformasikan segera setelah diverifikasi. Bila ingin percepatan, hubungi <strong>KONTAK ADMIN</strong> dengan bukti pembayaran.</p>",
+            'PAID' => "<p style=\"margin:0 0 6px 0;\">Terima kasih — pembayaran Anda telah <strong>DITERIMA</strong>. Pesanan sedang diproses dan akan ditindaklanjuti sesuai jadwal. Untuk pertanyaan, hubungi <strong>KONTAK ADMIN</strong>.</p>",
+            'CANCELLED' => "<p style=\"margin:0 0 6px 0;\">Pesanan ini <strong>DIBATALKAN</strong>. Mohon maaf atas ketidaknyamanan. Jika Anda ingin mengajukan ulang pesanan atau menanyakan alasan pembatalan, silakan hubungi <strong>KONTAK ADMIN</strong>.</p>",
+            'EXPIRED' => "<p style=\"margin:0 0 6px 0;\">Waktu pembayaran telah <strong>KADALUARSA</strong>. Anda dapat membuat pesanan baru atau menghubungi <strong>KONTAK ADMIN</strong> untuk opsi lain.</p>",
+        ];
+
+        // mapping kelas badge (sesuaikan class CSS yang sudah ada: paid/pending/cancel)
+        $badgeMap = [
+            'PAID' => 'paid',
+            'PENDING' => 'pending',
+            'UNPAID' => 'pending',
+            'CANCELLED' => 'cancel',
+            'EXPIRED' => 'cancel',
+            'FAILED' => 'cancel',
+        ];
+
+        // ambil message & badge, pakai fallback jika tidak dikenal
+        $messageHtml = $messages[$status] ?? "<p style=\"margin:0 0 6px 0;\">Status: <strong>" . e($statusRaw) . "</strong>. Jika perlu bantuan, hubungi <strong>{$contact}</strong>.</p>";
+        $badgeClass = $badgeMap[$status] ?? 'pending';
+    @endphp
+
     <div style="display:flex; justify-content:space-between; gap:20px; margin-top:22px; align-items:flex-start;">
         <div style="flex:1;">
             <div class="notes">
                 <strong>Catatan</strong>
                 <div class="muted" style="margin-top:6px;">
-                    Terima kasih telah melakukan pemesanan. Simpan invoice ini sebagai bukti pembayaran.
-                    {{-- jika ada instruksi bank atau syarat pembayaran, tambahkan di sini --}}
-                    @if(!empty($order->notes)) <div style="margin-top:8px;">{{ $order->notes }}</div> @endif
+                    {{-- tampilkan pesan status (sudah safe HTML) --}}
+                    {!! $messageHtml !!}
+
+                    {{-- tampilkan catatan tambahan dari user jika ada --}}
+                    @if(!empty($order->notes))
+                        <div style="margin-top:8px;">{{ $order->notes }}</div>
+                    @endif
                 </div>
             </div>
         </div>
-        <br>
+
         <div style="text-align:left; width:220px;">
             <div class="small muted">Dicetak: {{ \Carbon\Carbon::now()->format('d M Y H:i') }}</div>
             @if(!empty($order->order_id))

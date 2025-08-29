@@ -5,11 +5,16 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="csrf-token" content="{{ csrf_token() }}">
 
-        <title>{{ config('app.name', 'Laravel') }}</title>
+        <!-- DEBUG: lihat apakah $title sampai ke view -->
+        <!-- BLADE_TITLE: {{ isset($title) ? $title : '[NULL]' }} -->
+
+        <title>{{ $title ?? config('app.name', 'Laravel') }}</title>
 
         <!-- Fonts -->
         <link rel="preconnect" href="https://fonts.bunny.net">
         <link href="https://fonts.bunny.net/css?family=figtree:400,500,600&display=swap" rel="stylesheet" />
+        <link rel="icon" href="{{ asset('tools.ico') }}" type="image/x-icon">
+        <link rel="shortcut icon" href="{{ asset('tools.ico') }}" type="image/x-icon">
 
         <!-- Prevent FOUC: set theme before loading CSS -->
         <script>
