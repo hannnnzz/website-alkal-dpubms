@@ -1,4 +1,3 @@
-{{-- resources/views/admin/orders/invoice.blade.php --}}
 @php
     use Carbon\Carbon;
 @endphp
@@ -71,7 +70,19 @@
 
                                                     <div class="truncate">
                                                         <div class="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">{{ $item->name ?? '-' }}</div>
-                                                        <div class="text-xs text-gray-500 dark:text-gray-300">{{ $item->type ?? '-' }} • Jumlah: {{ $item->quantity ?? 1 }}</div>
+                                                        <div class="text-xs text-gray-500 dark:text-gray-300">
+                                                            {{ $item->type }} •
+                                                            @if(($item->type ?? '') === 'Sewa')
+                                                                Durasi:
+                                                                @if($item->rental_start && $item->rental_end)
+                                                                    {{ \Carbon\Carbon::parse($item->rental_start)->diffInDays(\Carbon\Carbon::parse($item->rental_end)) + 1 }} hari
+                                                                @else
+                                                                    -
+                                                                @endif
+                                                            @else
+                                                                Jumlah: {{ $item->quantity }}
+                                                            @endif
+                                                        </div>
                                                     </div>
                                                 </div>
 
@@ -86,28 +97,75 @@
                                                 </div>
                                             </summary>
 
-                                            <div class="mt-3 text-sm text-gray-600 dark:text-gray-300">
-                                                @if(strtolower($item->type ?? '') === 'sewa')
-                                                    <p>
-                                                        <strong>Periode:</strong>
-                                                        {{ $item->rental_start ? Carbon::parse($item->rental_start)->format('d M Y') : '-' }}
-                                                        — {{ $item->rental_end ? Carbon::parse($item->rental_end)->format('d M Y') : '-' }}
-                                                    </p>
-                                                    <p>
-                                                        <strong>Durasi hari:</strong>
-                                                        @if(!empty($item->rental_start) && !empty($item->rental_end))
-                                                            {{ Carbon::parse($item->rental_start)->diffInDays(Carbon::parse($item->rental_end)) + 1 }}
-                                                        @else
-                                                            -
-                                                        @endif
-                                                    </p>
-                                                @else
-                                                    <p>
-                                                        <strong>Tanggal Pengujian:</strong>
-                                                        {{ $order->test_start ? \Carbon\Carbon::parse($order->test_start)->format('d M Y') : '-' }}
-                                                        — {{ $order->test_end ? \Carbon\Carbon::parse($order->test_end)->format('d M Y') : '-' }}
-                                                    </p>
+                                            <!-- konten detail -->
+                                            <div class="mt-3 text-sm text-gray-600 dark:text-gray-300"
+                                                @if(strtolower($item->type ?? '') !== 'sewa') x-data="{ editing: false }" @endif>
 
+                                                <!-- tampilkan detail -->
+                                                <div x-show="!editing" class="space-y-2">
+                                                    @if(strtolower($item->type ?? '') === 'sewa')
+                                                        <p><strong>Periode:</strong>
+                                                            @if($item->rental_start && $item->rental_end)
+                                                                {{ \Carbon\Carbon::parse($item->rental_start)->format('d M Y') }}
+                                                                —
+                                                                {{ \Carbon\Carbon::parse($item->rental_end)->format('d M Y') }}
+                                                            @else
+                                                                -
+                                                            @endif
+                                                        </p>
+                                                        <p><strong>Lokasi:</strong> {{ $item->lokasi ?? '-' }}</p>
+                                                    @else
+                                                        <p><strong>Tanggal Pengujian:</strong>
+                                                            @if($item->rental_start && $item->rental_end)
+                                                                {{ \Carbon\Carbon::parse($item->rental_start)->format('d M Y') }}
+                                                                —
+                                                                {{ \Carbon\Carbon::parse($item->rental_end)->format('d M Y') }}
+                                                            @else
+                                                                -
+                                                            @endif
+                                                        </p>
+
+                                                        <!-- tombol edit hanya muncul kalau bukan sewa -->
+                                                        <button type="button" @click="editing = true"
+                                                            class="px-3 py-1 bg-blue-600 text-white rounded text-sm">
+                                                            Edit
+                                                        </button>
+                                                    @endif
+                                                </div>
+
+                                                <!-- form edit (hanya muncul kalau bukan sewa) -->
+                                                @if(strtolower($item->type ?? '') !== 'sewa')
+                                                    <div x-show="editing" x-cloak>
+                                                        <form action="{{ route('admin.orders.item.update', [$order->id, $item->id]) }}" method="POST" class="space-y-2">
+                                                            @csrf
+                                                            @method('PATCH')
+
+                                                            <div>
+                                                                @if(strtolower($item->type ?? '') === 'sewa')
+                                                                    <label class="block text-xs text-gray-500">Tanggal Sewa</label>
+                                                                @else
+                                                                    <label class="block text-xs text-gray-500">Tanggal Uji</label>
+                                                                @endif
+
+                                                                <div class="flex gap-2">
+                                                                    <input type="date"
+                                                                        name="rental_start"
+                                                                        value="{{ $item->rental_start }}"
+                                                                        class="px-2 py-1 rounded border text-sm">
+                                                                    <span class="self-center">—</span>
+                                                                    <input type="date"
+                                                                        name="rental_end"
+                                                                        value="{{ $item->rental_end }}"
+                                                                        class="px-2 py-1 rounded border text-sm">
+                                                                </div>
+                                                            </div>
+
+                                                            <div class="flex gap-2">
+                                                                <button type="submit" class="px-3 py-1 bg-green-600 text-white rounded text-sm">Simpan</button>
+                                                                <button type="button" @click="editing = false" class="px-3 py-1 border rounded text-sm">Batal</button>
+                                                            </div>
+                                                        </form>
+                                                    </div>
                                                 @endif
                                             </div>
                                         </details>
@@ -243,7 +301,7 @@
 
                                 <div class="mt-3 flex flex-col gap-2">
                                     <a href="{{ route('admin.orders.invoice.edit', $order->id) }}" class="inline-flex items-center gap-2 px-3 py-2 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-800 text-sm text-gray-700 dark:text-gray-100 transition no-print">
-                                        Edit Dokumen
+                                        Edit Pesanan
                                     </a>
 
                                     <a href="{{ route('admin.orders.invoice.pdf', $order->id) }}" target="_blank"

@@ -83,23 +83,6 @@
                                 <textarea id="alamat_pengirim" name="alamat_pengirim" rows="3"
                                     class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-300 dark:bg-gray-700 dark:text-white text-sm px-3 py-2">{{ old('alamat_pengirim', $order->alamat_pengirim) }}</textarea>
                             </div>
-
-                            <!-- Tambahan: Tanggal Uji -->
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-                                <div>
-                                    <label for="test_start" class="block text-sm font-medium text-gray-700 dark:text-gray-200">Tanggal Uji Mulai</label>
-                                    <input type="date" name="test_start" id="test_start"
-                                        value="{{ old('test_start', $order->test_start ? Carbon::parse($order->test_start)->format('Y-m-d') : '') }}"
-                                        class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-300 dark:bg-gray-700 dark:text-white text-sm px-3 py-2">
-                                </div>
-
-                                <div>
-                                    <label for="test_end" class="block text-sm font-medium text-gray-700 dark:text-gray-200">Tanggal Uji Selesai</label>
-                                    <input type="date" name="test_end" id="test_end"
-                                        value="{{ old('test_end', $order->test_end ? Carbon::parse($order->test_end)->format('Y-m-d') : '') }}"
-                                        class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-300 dark:bg-gray-700 dark:text-white text-sm px-3 py-2">
-                                </div>
-                            </div>
                         </div>
 
 

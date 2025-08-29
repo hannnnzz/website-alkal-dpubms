@@ -88,6 +88,13 @@
         line-height: 1.3;
     }
 
+    tfoot td {
+        padding:10px 4px;
+        font-weight:700;
+        font-size:12px;
+        border-top:1px solid rgba(230,233,238,0.9);
+    }
+
     tbody tr:last-child td { border-bottom: none; }
 
     /* Column sizing - Fixed width untuk print */
@@ -284,12 +291,25 @@
 
     {{-- Items table --}}
     <div class="table-container">
+        @php
+            $items = collect($order->items ?? []);
+            $onlySewa = $items->isNotEmpty() && $items->every(fn($it) => strtolower($it->type ?? '') === 'sewa');
+            $onlyUji  = $items->isNotEmpty() && $items->every(fn($it) => strtolower($it->type ?? '') === 'uji');
+
+            $qtyHeader = $onlySewa ? 'Jumlah Hari' : ($onlyUji ? 'Jumlah' : 'Jumlah (hari/qty)');
+
+            // total semua item (menggunakan kolom price)
+            $grandTotal = $items->sum(function($it) {
+                return (float) ($it->price ?? 0);
+            });
+        @endphp
+
         <table role="table" aria-label="Rincian item">
             <thead>
                 <tr>
                     <th class="col-item">Item & Deskripsi</th>
                     <th class="col-period">Periode / Info</th>
-                    <th class="col-qty text-center">Jumlah Hari</th>
+                    <th class="col-qty text-center">{{ $qtyHeader }}</th> {{-- <-- dynamic --}}
                     <th class="col-unit text-right">Harga Satuan</th>
                     <th class="col-total text-right">Total</th>
                 </tr>
@@ -297,8 +317,17 @@
             <tbody>
                 @forelse($order->items as $item)
                     @php
-                        $qty = $item->quantity ?? 1;
+                        // Harga total dari item (sudah disimpan di kolom price)
                         $price = (float) ($item->price ?? 0);
+                        $type = strtolower($item->type ?? '');
+
+                        // nilai diambil dari kolom quantity sesuai permintaan
+                        $qty = isset($item->quantity) ? (int) $item->quantity : 1;
+                        if ($qty <= 0) {
+                            $qty = 1;
+                        }
+
+                        // Hindari pembagian dengan nol
                         $unit = $qty ? ($price / $qty) : $price;
                     @endphp
                     <tr>
@@ -312,7 +341,7 @@
                             @endif
                         </td>
                         <td class="col-period">
-                            @if(strtolower($item->type ?? '') === 'sewa' && ($item->rental_start || $item->rental_end))
+                            @if($type === 'sewa' && ($item->rental_start || $item->rental_end))
                                 <div class="muted small">
                                     {{ $item->rental_start ? \Carbon\Carbon::parse($item->rental_start)->format('d M Y') : '-' }}
                                     —
@@ -322,8 +351,15 @@
                                 <div class="muted small">{{ $item->type ?? '-' }}</div>
                             @endif
                         </td>
-                        <td class="col-qty text-center">{{ $qty }}</td>
-                        <td class="col-unit text-right">Rp {{ number_format($unit,0,',','.') }}</td>
+                        <td class="col-qty text-center">
+                            {{ $qty }}
+                        </td>
+                        <td class="col-unit text-right">
+                            Rp. {{ number_format($unit,0,',','.') }}
+                            @if($type === 'sewa')
+                                <div class="small muted">/ hari</div>
+                            @endif
+                        </td>
                         <td class="col-total text-right">Rp {{ number_format($price,0,',','.') }}</td>
                     </tr>
                 @empty
@@ -332,22 +368,67 @@
                     </tr>
                 @endforelse
             </tbody>
+
+            {{-- Total row --}}
+            <tfoot>
+                <tr>
+                    <td colspan="4" class="text-right">Total</td>
+                    <td class="col-total text-right">Rp {{ number_format((float)$grandTotal,0,',','.') }}</td>
+                </tr>
+            </tfoot>
         </table>
     </div>
 
     {{-- Notes & Footer --}}
+    @php
+        // ambil status dan normalisasi
+        $statusRaw = $order->status ?? 'UNPAID';
+        $status = strtoupper(trim($statusRaw));
+
+        // kontak fallback (escape nanti saat digunakan)
+        $contactPlain = $order->provider_contact ?? $order->customer_contact ?? 'tim layanan pelanggan';
+        $contact = e($contactPlain);
+
+        // mapping pesan (HTML kecil — semua variabel di-escape)
+        $messages = [
+            'UNPAID' => "<p style=\"margin:0 0 6px 0;\">Invoice ini <strong>BELUM DIBAYAR</strong>. Silakan selesaikan pembayaran agar pesanan dapat diproses. Jika butuh bantuan, hubungi <strong>KONTAK ADMIN</strong>.</p>",
+            'PENDING' => "<p style=\"margin:0 0 6px 0;\">Pembayaran sedang <strong>MENUNGGU KONFIRMASI</strong>. Kami akan menginformasikan segera setelah diverifikasi. Bila ingin percepatan, hubungi <strong>KONTAK ADMIN</strong> dengan bukti pembayaran.</p>",
+            'PAID' => "<p style=\"margin:0 0 6px 0;\">Terima kasih — pembayaran Anda telah <strong>DITERIMA</strong>. Pesanan sedang diproses dan akan ditindaklanjuti sesuai jadwal. Untuk pertanyaan, hubungi <strong>KONTAK ADMIN</strong>.</p>",
+            'CANCELLED' => "<p style=\"margin:0 0 6px 0;\">Pesanan ini <strong>DIBATALKAN</strong>. Mohon maaf atas ketidaknyamanan. Jika Anda ingin mengajukan ulang pesanan atau menanyakan alasan pembatalan, silakan hubungi <strong>KONTAK ADMIN</strong>.</p>",
+            'EXPIRED' => "<p style=\"margin:0 0 6px 0;\">Waktu pembayaran telah <strong>KADALUARSA</strong>. Anda dapat membuat pesanan baru atau menghubungi <strong>KONTAK ADMIN</strong> untuk opsi lain.</p>",
+        ];
+
+        // mapping kelas badge (sesuaikan class CSS yang sudah ada: paid/pending/cancel)
+        $badgeMap = [
+            'PAID' => 'paid',
+            'PENDING' => 'pending',
+            'UNPAID' => 'pending',
+            'CANCELLED' => 'cancel',
+            'EXPIRED' => 'cancel',
+            'FAILED' => 'cancel',
+        ];
+
+        // ambil message & badge, pakai fallback jika tidak dikenal
+        $messageHtml = $messages[$status] ?? "<p style=\"margin:0 0 6px 0;\">Status: <strong>" . e($statusRaw) . "</strong>. Jika perlu bantuan, hubungi <strong>{$contact}</strong>.</p>";
+        $badgeClass = $badgeMap[$status] ?? 'pending';
+    @endphp
+
     <div style="display:flex; justify-content:space-between; gap:20px; margin-top:22px; align-items:flex-start;">
         <div style="flex:1;">
             <div class="notes">
                 <strong>Catatan</strong>
                 <div class="muted" style="margin-top:6px;">
-                    Terima kasih telah melakukan pemesanan. Simpan invoice ini sebagai bukti pembayaran.
-                    {{-- jika ada instruksi bank atau syarat pembayaran, tambahkan di sini --}}
-                    @if(!empty($order->notes)) <div style="margin-top:8px;">{{ $order->notes }}</div> @endif
+                    {{-- tampilkan pesan status (sudah safe HTML) --}}
+                    {!! $messageHtml !!}
+
+                    {{-- tampilkan catatan tambahan dari user jika ada --}}
+                    @if(!empty($order->notes))
+                        <div style="margin-top:8px;">{{ $order->notes }}</div>
+                    @endif
                 </div>
             </div>
         </div>
-        <br>
+
         <div style="text-align:left; width:220px;">
             <div class="small muted">Dicetak: {{ \Carbon\Carbon::now()->format('d M Y H:i') }}</div>
             @if(!empty($order->order_id))
@@ -355,6 +436,8 @@
             @endif
         </div>
     </div>
+
+
 </div>
 
 <script>

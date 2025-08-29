@@ -18,6 +18,7 @@ class OrderItem extends Model
         'rental_start',
         'rental_end',
         'price',
+        'lokasi',
     ];
 
     protected $casts = [

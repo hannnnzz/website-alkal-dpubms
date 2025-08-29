@@ -13,7 +13,19 @@
         <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
             <div class="bg-white dark:bg-gray-800 overflow-hidden shadow-lg sm:rounded-lg">
                 <div class="p-6 text-gray-900 dark:text-gray-100">
-                    <form action="{{ route('user.order.storesewa') }}" method="POST" enctype="multipart/form-data" class="space-y-8" id="order-form">
+
+                    @if ($errors->any())
+                        <div class="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded">
+                            <strong>Ada kesalahan:</strong>
+                            <ul class="mt-2 list-disc list-inside">
+                                @foreach ($errors->all() as $err)
+                                    <li>{{ $err }}</li>
+                                @endforeach
+                            </ul>
+                        </div>
+                    @endif
+
+                    <form action="{{ route('user.order.storesewa') }}" method="POST" enctype="multipart/form-data" class="space-y-8" id="order-sewa-form">
                         @csrf
 
                         <!-- SECTION 1: INFORMASI PENYEDIA & PEMESAN -->
@@ -24,7 +36,7 @@
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
                                     <label for="provider_name" class="block text-sm font-medium text-gray-700 dark:text-gray-200">Nama Penyedia Alat <span class="text-red-500">*</span></label>
-                                    <input type="text" id="provider_name" name="provider_name" required placeholder="Masukkan nama penyedia jasa/alat"
+                                    <input type="text" id="provider_name" name="provider_name" required placeholder="Masukkan nama penyedia alat"
                                         class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-300 dark:bg-gray-700 dark:text-white">
                                 </div>
 
@@ -43,8 +55,8 @@
                         </div>
 
                         <!-- SECTION 2: DETAIL PAKET & SEWA ALAT -->
-                        <div class="bg-blue-50 dark:bg-gray-700 p-6 rounded-lg">
-                            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 border-b border-blue-200 dark:border-gray-600 pb-2">
+                        <div class="bg-gray-50 dark:bg-gray-700 p-6 rounded-lg">
+                            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 border-b border-gray-200 dark:border-gray-600 pb-2">
                                 Detail Paket & Sewa Alat
                             </h3>
                             <div class="space-y-6">
@@ -62,10 +74,11 @@
 
                                 <div>
                                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">Sewa Alat & Periode <span class="text-red-500">*</span></label>
-                                    <div id="alat-wrapper" class="space-y-4"></div>
+                                    <div id="alat-wrapper" class="space-y-3"></div>
                                     <button type="button" id="add-alat" class="mt-3 inline-flex items-center px-3 py-2 text-sm font-medium text-blue-600 bg-blue-100 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800 rounded-md transition">
                                         Tambah Alat Sewa
                                     </button>
+                                    <p class="text-xs text-gray-500 mt-2">Isikan lokasinya (mis. "Proyek Jl. Merdeka KM 3") untuk tiap alat.</p>
                                 </div>
 
                                 <div>
@@ -80,8 +93,8 @@
                         </div>
 
                         <!-- SECTION 3: INFORMASI SURAT PERMOHONAN -->
-                        <div class="bg-green-50 dark:bg-gray-700 p-6 rounded-lg">
-                            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 border-b border-green-200 dark:border-gray-600 pb-2">
+                        <div class="bg-gray-50 dark:bg-gray-700 p-6 rounded-lg">
+                            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 border-b border-gray-200 dark:border-gray-600 pb-2">
                                 Informasi Surat Permohonan
                             </h3>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -119,8 +132,8 @@
                         </div>
 
                         <!-- SECTION 4: RINGKASAN PESANAN -->
-                        <div class="bg-yellow-50 dark:bg-gray-700 p-6 rounded-lg">
-                            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 border-b border-yellow-200 dark:border-gray-600 pb-2">
+                        <div class="bg-gray-50 dark:bg-gray-700 p-6 rounded-lg">
+                            <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-4 border-b border-gray-200 dark:border-gray-600 pb-2">
                                 Ringkasan Pesanan
                             </h3>
                             <div class="flex items-center justify-between">
@@ -136,7 +149,6 @@
                             </div>
                         </div>
 
-                        <!-- Hidden field untuk amount -->
                         <input type="hidden" name="amount" id="amount" value="0">
                     </form>
                 </div>
@@ -150,70 +162,87 @@
         const CHECK_AVAIL_URL = "{{ route('user.alats.checkAvailability') }}";
         const CSRF_TOKEN = "{{ csrf_token() }}";
 
-        let alatIndex = 0;
-        const alatHarga = @json($alats); // format: { "Nama Alat": { harga: xxx, locked: true/false } }
+        // Data harga alat dari controller (format: { "nama": { harga: number, locked: bool } })
+        const alatHarga = @json($alats ?? []);
         const alatList = Object.keys(alatHarga);
+        let alatIndex = 0;
 
         const wrapper = document.getElementById('alat-wrapper');
         const addBtn = document.getElementById('add-alat');
         const totalHargaDisplay = document.getElementById('total-harga');
         const amountInput = document.getElementById('amount');
 
-        function updateDropdownOptions() {
-            const selects = wrapper.querySelectorAll('select');
-            const selected = Array.from(selects).map(s => s.value);
+        function formatRp(n){ return `Rp ${Number(n||0).toLocaleString('id-ID')}`; }
 
-            selects.forEach(select => {
-                const currentValue = select.value;
-                select.innerHTML = '';
+        function updateDropdownOptions(){
+            const rows = wrapper.querySelectorAll('.sewa-row');
+            const selected = Array.from(rows).map(r => (r.querySelector('select')?.value) || '');
+
+            rows.forEach(row => {
+                const select = row.querySelector('select');
+                const current = select.value;
+                select.innerHTML = '<option value="">-- Pilih Alat --</option>';
 
                 alatList.forEach(alat => {
-                    const alreadySelected = selected.includes(alat) && alat !== currentValue;
-                    const isLocked = !!(alatHarga[alat] && alatHarga[alat].locked);
-                    if (alreadySelected) return;
-
-                    const option = document.createElement('option');
-                    option.value = alat;
-                    option.textContent = `${alat} - Rp ${alatHarga[alat].harga.toLocaleString()}${isLocked ? ' (Nonaktif)' : ''}`;
-                    if (isLocked) option.disabled = true;
-                    if (alat === currentValue) option.selected = true;
-
-                    select.appendChild(option);
+                    const info = alatHarga[alat] || { harga: 0, locked: false };
+                    const already = selected.includes(alat) && alat !== current;
+                    if (already) return;
+                    const opt = document.createElement('option');
+                    opt.value = alat;
+                    opt.textContent = `${alat} - ${formatRp(info.harga)}` + (info.locked ? ' (Nonaktif)' : '');
+                    if (info.locked) opt.disabled = true;
+                    if (alat === current) opt.selected = true;
+                    select.appendChild(opt);
                 });
             });
 
-            const unlockedAlats = alatList.filter(a => !alatHarga[a].locked);
-            const availableUnselectedCount = unlockedAlats.filter(a => !selected.includes(a)).length;
+            const unlocked = alatList.filter(a => !(alatHarga[a] && alatHarga[a].locked));
+            const availableUnselectedCount = unlocked.filter(a => !selected.includes(a)).length;
             addBtn.disabled = availableUnselectedCount <= 0;
+            addBtn.textContent = addBtn.disabled ? 'Semua Alat Telah Dipilih' : 'Tambah Alat Sewa';
         }
 
-        function updateTotalHarga() {
+        function updateTotalHarga(){
             let total = 0;
-            document.querySelectorAll('input[id^="daterange-"]').forEach((input) => {
-                const val = input.value || '';
-                const [start, end] = val.split(' - ');
-                if (start && end) {
-                    const tglAwal = new Date(start);
-                    const tglAkhir = new Date(end);
-                    const selisihHari = Math.ceil((tglAkhir - tglAwal) / (1000 * 60 * 60 * 24)) + 1;
+            const rows = wrapper.querySelectorAll('.sewa-row');
 
-                    const alatSelect = input.parentElement.querySelector('select');
-                    const alat = alatSelect.value;
-                    const hargaPerHari = (alatHarga[alat] && alatHarga[alat].harga) ? alatHarga[alat].harga : 0;
-                    total += selisihHari * hargaPerHari;
+            rows.forEach(row => {
+                const select = row.querySelector('select');
+                const dateInput = row.querySelector('input[type="text"].daterange');
+                const subtotalEl = row.querySelector('.row-subtotal');
+                const alat = select?.value;
+                const harga = alat && alatHarga[alat] ? Number(alatHarga[alat].harga || 0) : 0;
+                let subtotal = 0;
+
+                if (dateInput && dateInput.value){
+                    const val = dateInput.value;
+                    const parts = val.split(' - ').map(s => s.trim());
+                    if (parts.length === 2 && parts[0] && parts[1]){
+                        const d1 = new Date(parts[0]);
+                        const d2 = new Date(parts[1]);
+                        if (!isNaN(d1) && !isNaN(d2)){
+                            // hitung hari termasuk kedua ujung (inclusive)
+                            const diff = Math.ceil((d2 - d1) / (1000*60*60*24)) + 1;
+                            if (diff > 0) subtotal = diff * harga;
+                        }
+                    }
                 }
+
+                subtotalEl.textContent = formatRp(subtotal);
+                total += subtotal;
             });
-            totalHargaDisplay.textContent = `Rp ${total.toLocaleString()}`;
-            amountInput.value = total; // update hidden amount field
+
+            totalHargaDisplay.textContent = formatRp(total);
+            if (amountInput) amountInput.value = total;
         }
 
-        function validateSelectedNotLocked() {
+        function validateSelectedNotLocked(){
             const selects = wrapper.querySelectorAll('select');
-            for (const s of selects) {
+            for (const s of selects){
                 const val = s.value;
-                if (val && alatHarga[val] && alatHarga[val].locked) {
+                if (val && alatHarga[val] && alatHarga[val].locked){
                     alert(`Alat "${val}" sudah dinonaktifkan. Silakan pilih alat lain.`);
-                    s.value = ''; // clear selection
+                    s.value = '';
                     updateDropdownOptions();
                     updateTotalHarga();
                     return false;
@@ -222,25 +251,7 @@
             return true;
         }
 
-        wrapper.addEventListener('change', function(e) {
-            if (e.target && e.target.tagName === 'SELECT') {
-                validateSelectedNotLocked();
-            }
-        });
-
-        const form = document.getElementById('order-form');
-        if (form) {
-            form.addEventListener('submit', function(e) {
-                if (!validateSelectedNotLocked()) {
-                    e.preventDefault();
-                    return false;
-                }
-                // pastikan total valid (jika kamu ingin wajib >0, bisa tambahkan cek)
-                updateTotalHarga();
-            });
-        }
-
-        async function checkAvailability(alat, start, end) {
+        async function checkAvailability(alat, start, end){
             try {
                 const res = await fetch(CHECK_AVAIL_URL, {
                     method: 'POST',
@@ -251,115 +262,176 @@
                     },
                     body: JSON.stringify({ alat, start, end })
                 });
-                if (!res.ok) {
+                if (!res.ok){
                     const err = await res.json().catch(()=>({}));
                     return { available: false, error: err.message || 'Gagal cek ketersediaan' };
                 }
                 const data = await res.json();
-                return { available: !!data.available };
+                return { available: !!data.available, error: data.message || null };
             } catch (e) {
                 console.error('checkAvailability error', e);
                 return { available: false, error: 'Network error' };
             }
         }
 
-        function initLitepicker(id, input, alatSelect, single = false) {
-            let picker;
-            async function setLockedDates() {
-                const alat = alatSelect.value;
-                if (!alat) return;
+        // Ambil tanggal yang sudah dibooking (untuk lockDays)
+        async function fetchBookedDates(alat){
+            try {
                 const res = await fetch(`/user/alats/booked-dates/${encodeURIComponent(alat)}`);
-                const bookedDates = res.ok ? await res.json() : [];
-                if (picker) picker.destroy();
+                if (!res.ok) return [];
+                const d = await res.json();
+                return Array.isArray(d) ? d : [];
+            } catch (e) {
+                console.error(e);
+                return [];
+            }
+        }
+
+        function initLitepicker(id, input, alatSelect, single = false){
+            let picker = null;
+
+            async function setLockedDates(){
+                const alat = alatSelect.value;
+                const bookedDates = alat ? (await fetchBookedDates(alat)) : [];
+                if (picker) try { picker.destroy(); } catch(e){}
                 picker = new Litepicker({
                     element: input,
                     singleMode: single,
                     format: 'YYYY-MM-DD',
                     minDate: new Date(),
                     lockDays: bookedDates,
-                    setup: (picker) => {
-                        picker.on('selected', async () => {
+                    setup: (p) => {
+                        p.on('selected', async () => {
                             updateTotalHarga();
-                            if (single) return; // tidak cek availability untuk singleDate test_date
+                            if (single) return;
                             const val = input.value || '';
-                            const [start, end] = val.split(' - ').map(s => s.trim());
+                            const [start, end] = val.split(' - ').map(s=>s.trim());
                             const alat = alatSelect.value;
                             if (!alat || !start || !end) return;
                             const r = await checkAvailability(alat, start, end);
-                            if (!r.available) {
-                                alert(r.error || 'Tanggal yang dipilih untuk alat ini bentrok dengan pemesanan lain. Silakan pilih rentang lain.');
+                            if (!r.available){
+                                alert(r.error || 'Tanggal yang dipilih bentrok dengan pemesanan lain. Silakan pilih rentang lain.');
                                 input.value = '';
-                                try { picker.clearSelection(); } catch(e){/* ignore */ }
+                                try { p.clearSelection(); } catch(e){}
                                 updateTotalHarga();
                             }
                         });
                     }
                 });
             }
+
             alatSelect.addEventListener('change', setLockedDates);
             setLockedDates();
         }
 
-        function addEntry() {
-            const div = document.createElement('div');
-            div.className = 'flex items-center gap-4 mb-2 alat-entry';
+        function createSewaRow(idx){
+            const row = document.createElement('div');
+            row.className = 'sewa-row flex items-center gap-3 p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600';
 
-            const alatSelect = document.createElement('select');
-            alatSelect.name = `sewa[${alatIndex}][alat]`;
-            alatSelect.className = 'w-1/3 rounded-md border-gray-300 shadow-sm dark:bg-gray-700 dark:text-white focus:border-blue-500 focus:ring focus:ring-blue-300';
-            div.appendChild(alatSelect);
+            // select alat (flex-1)
+            const selectWrap = document.createElement('div');
+            selectWrap.className = 'flex-1';
+            const select = document.createElement('select');
+            select.name = `sewa[${idx}][alat]`;
+            select.className = 'w-full rounded-md border-gray-300 dark:bg-gray-700 dark:text-white';
+            select.addEventListener('change', () => { updateDropdownOptions(); updateTotalHarga(); });
+            selectWrap.appendChild(select);
 
-            const tglInput = document.createElement('input');
-            tglInput.type = 'text';
-            tglInput.name = `sewa[${alatIndex}][tanggal]`;
-            tglInput.id = `daterange-${alatIndex}`;
-            tglInput.placeholder = 'Pilih rentang tanggal sewa';
-            tglInput.className = 'w-2/3 rounded-md border-gray-300 shadow-sm dark:bg-gray-700 dark:text-white focus:border-blue-500 focus:ring focus:ring-blue-300';
-            div.appendChild(tglInput);
+            // lokasi (w-1/4)
+            const lokasiWrap = document.createElement('div');
+            lokasiWrap.className = 'w-1/4';
+            const lokasi = document.createElement('input');
+            lokasi.type = 'text';
+            lokasi.name = `sewa[${idx}][lokasi]`;
+            lokasi.placeholder = 'Lokasi alat / lokasi kerja';
+            lokasi.className = 'w-full rounded-md border-gray-300 dark:bg-gray-700 dark:text-white';
+            lokasiWrap.appendChild(lokasi);
 
-            const removeBtn = document.createElement('button');
-            removeBtn.type = 'button';
-            removeBtn.className = 'remove-alat text-red-500 hover:text-red-700 text-xl leading-none font-bold';
-            removeBtn.innerHTML = '&times;';
-            removeBtn.addEventListener('click', () => {
-                div.remove();
+            // tanggal range (w-1/3)
+            const dateWrap = document.createElement('div');
+            dateWrap.className = 'w-1/3';
+            const dateInput = document.createElement('input');
+            dateInput.type = 'text';
+            dateInput.name = `sewa[${idx}][tanggal]`;
+            dateInput.className = 'w-full rounded-md border-gray-300 dark:bg-gray-700 dark:text-white daterange';
+            dateInput.placeholder = 'Pilih rentang tanggal sewa';
+            dateWrap.appendChild(dateInput);
+
+            // subtotal display
+            const subtotal = document.createElement('div');
+            subtotal.className = 'row-subtotal w-36 text-right font-medium';
+            subtotal.textContent = formatRp(0);
+
+            // remove button
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'w-10 h-10 flex items-center justify-center text-red-500 border rounded-md';
+            remove.textContent = 'X';
+            remove.title = 'Hapus';
+            remove.addEventListener('click', () => {
+                row.remove();
                 updateDropdownOptions();
                 updateTotalHarga();
             });
-            div.appendChild(removeBtn);
 
-            wrapper.appendChild(div);
+            row.appendChild(selectWrap);
+            row.appendChild(lokasiWrap);
+            row.appendChild(dateWrap);
+            row.appendChild(subtotal);
+            row.appendChild(remove);
 
-            // isi opsi select (updateDropdownOptions akan menjaga agar tidak duplikat)
-            updateDropdownOptions();
-
-            // inisialisasi datepicker dengan referensi select (range mode)
-            initLitepicker(`daterange-${alatIndex}`, tglInput, alatSelect, false);
-
-            // ketika select berubah, update total (dan check handled by initLitepicker listener)
-            alatSelect.addEventListener('change', () => {
-                updateDropdownOptions();
-                updateTotalHarga();
-            });
-
-            alatIndex++;
+            return { row, select, dateInput: dateInput };
         }
 
-        addBtn.addEventListener('click', addEntry);
-        // tambahkan satu entri awal
-        addEntry();
+        function addAlatEntry(){
+            const idx = alatIndex++;
+            const { row, select, dateInput } = createSewaRow(idx);
+            wrapper.appendChild(row);
 
-        // init single date picker untuk test_date
-        (function initTestDate() {
-            const input = document.getElementById('test_date');
-            if (!input) return;
-            new Litepicker({
-                element: input,
-                singleMode: true,
-                format: 'YYYY-MM-DD',
-                minDate: new Date()
+            updateDropdownOptions();
+
+            // inisialisasi litepicker untuk row ini (mengunci tanggal sesuai alat)
+            initLitepicker(`daterange-${idx}`, dateInput, select, false);
+
+            // listener perubahan tanggal (total otomatis diupdate oleh picker selected handler, tapi juga safety)
+            dateInput.addEventListener('input', updateTotalHarga);
+
+            updateTotalHarga();
+        }
+
+        addBtn.addEventListener('click', addAlatEntry);
+
+        // buat 1 baris default
+        addAlatEntry();
+
+        // ketika wrapper berubah, pengecekan locked pilihan
+        wrapper.addEventListener('change', function(e){
+            if (e.target && e.target.tagName === 'SELECT'){
+                validateSelectedNotLocked();
+            }
+        });
+
+        // validasi form saat submit
+        const form = document.getElementById('order-sewa-form');
+        if (form){
+            form.addEventListener('submit', function(e){
+                const rows = Array.from(wrapper.querySelectorAll('.sewa-row'));
+                const valid = rows.some(r => r.querySelector('select')?.value);
+                if (!valid){
+                    alert('Pilih minimal 1 alat untuk disewa!');
+                    e.preventDefault();
+                    return false;
+                }
+                if (!validateSelectedNotLocked()){
+                    e.preventDefault();
+                    return false;
+                }
+                updateTotalHarga();
+                if (!confirm(`Konfirmasi pesanan dengan total biaya ${totalHargaDisplay.textContent}?`)){
+                    e.preventDefault();
+                    return false;
+                }
             });
-        })();
+        }
     </script>
-
 </x-app-layout>

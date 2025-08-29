@@ -419,5 +419,33 @@ class OrderController extends Controller
         return Excel::download(new OrdersMultiExport($orders), $filename);
     }
 
+    public function updateItem(Request $request, $id, $itemId)
+    {
+        $validated = $request->validate([
+            'rental_start' => 'required|date',
+            'rental_end'   => 'required|date|after_or_equal:rental_start',
+        ]);
+
+        // Cari order item
+        $item = \DB::table('order_items')
+            ->where('order_id', $id)
+            ->where('id', $itemId)
+            ->first();
+
+        if (!$item) {
+            return back()->with('error', 'Item tidak ditemukan.');
+        }
+
+        // Update
+        \DB::table('order_items')
+            ->where('id', $itemId)
+            ->update([
+                'rental_start' => $validated['rental_start'],
+                'rental_end'   => $validated['rental_end'],
+                'updated_at'   => now(),
+            ]);
+
+        return back()->with('success', 'Tanggal rental berhasil diperbarui.');
+    }
 
 }

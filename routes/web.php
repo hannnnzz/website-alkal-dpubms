@@ -60,6 +60,10 @@ Route::middleware(['auth','admin'])->prefix('admin')->name('admin.')->group(func
 
     // Admin cancel order
     Route::post('/orders/{id}/cancel', [AdminOrderController::class, 'cancel'])->name('orders.cancel');
+
+    // Admin Edit Tanggal
+    Route::patch('/orders/{id}/item/{item}', [AdminOrderController::class, 'updateItem'])->name('orders.item.update');
+
 });
 
 // USER ROUTES (gabungkan semua user routes di sini)
@@ -83,6 +87,9 @@ Route::middleware(['auth'])->prefix('user')->name('user.')->group(function () {
     Route::get('/order', [OrderController::class, 'index'])->name('order.index');
     Route::get('/order/{id}', [OrderController::class, 'show'])->name('order.show');
     Route::get('/order/{id}/invoice/pdf', [OrderController::class, 'invoicePdf'])->name('order.invoice.pdf');
+
+    // UPDATE lokasi per item (AJAX / fallback form)
+    Route::patch('/order/{id}/item/{item}', [OrderController::class, 'updateItem'])->name('order.item.update');
 
     // Cancel order (user)
     Route::post('/order/{id}/cancel', [OrderController::class, 'cancel'])->name('order.cancel');

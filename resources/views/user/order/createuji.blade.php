@@ -13,6 +13,7 @@
         <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
             <div class="bg-white dark:bg-gray-800 overflow-hidden shadow-lg sm:rounded-lg">
                 <div class="p-6 text-gray-900 dark:text-gray-100">
+
                     <form action="{{ route('user.order.storeuji') }}" method="POST" enctype="multipart/form-data" class="space-y-8" id="order-uji-form">
                         @csrf
 
@@ -157,32 +158,46 @@
 
     <script src="https://cdn.jsdelivr.net/npm/litepicker/dist/litepicker.js"></script>
     <script>
-        // Data harga uji (contoh: { "1": 250000, "2": 350000, ... })
-        const ujiHarga = @json($ujis);
-        const ujiList = Object.keys(ujiHarga);
+        // Data harga uji dari controller. Safe fallback ke array kosong.
+        const rawUjiData = @json($ujis ?? []);
+        // Normalisasi jadi ujiMap[id] = { name, price }
+        const ujiMap = {};
+        Object.keys(rawUjiData).forEach(k => {
+            const v = rawUjiData[k];
+            if (v && typeof v === 'object') {
+                ujiMap[k] = { name: v.name ?? `Uji ${k}`, price: Number(v.price ?? 0) };
+            } else {
+                ujiMap[k] = { name: `Uji ${k}`, price: Number(v ?? 0) };
+            }
+        });
 
+        const ujiList = Object.keys(ujiMap);
         let ujiIndex = 0;
         const ujiWrapper = document.getElementById('uji-wrapper');
         const addUjiBtn = document.getElementById('add-uji');
         const totalHargaDisplay = document.getElementById('total-harga');
-        const amountInput = document.getElementById('amount');
+        const amountInput = document.getElementById('amount'); // hidden input di form
 
-        function updateUjiDropdownOptions() {
-            const selects = ujiWrapper.querySelectorAll('select');
-            const selected = Array.from(selects).map(s => s.value);
+        function formatRp(n){ return `Rp ${Number(n||0).toLocaleString('id-ID')}`; }
 
-            selects.forEach(select => {
-                const currentValue = select.value;
+        // isi option select dan cegah duplicate pilihan
+        function updateUjiDropdownOptions(){
+            const rows = ujiWrapper.querySelectorAll('.uji-row');
+            const selected = Array.from(rows).map(r => r.querySelector('select').value);
+
+            rows.forEach(row => {
+                const select = row.querySelector('select');
+                const current = select.value;
                 select.innerHTML = '<option value="">-- Pilih Jenis Uji --</option>';
 
-                ujiList.forEach(uji => {
-                    const alreadySelected = selected.includes(uji) && uji !== currentValue;
-                    if (!alreadySelected) {
-                        const option = document.createElement('option');
-                        option.value = uji;
-                        option.textContent = `${uji} - Rp ${Number(ujiHarga[uji]).toLocaleString('id-ID')}`;
-                        if (uji === currentValue) option.selected = true;
-                        select.appendChild(option);
+                ujiList.forEach(id => {
+                    const already = selected.includes(id) && id !== current;
+                    if (!already){
+                        const opt = document.createElement('option');
+                        opt.value = id;
+                        opt.textContent = `${ujiMap[id].name} - ${formatRp(ujiMap[id].price)}`;
+                        if (id === current) opt.selected = true;
+                        select.appendChild(opt);
                     }
                 });
             });
@@ -191,76 +206,126 @@
             addUjiBtn.textContent = addUjiBtn.disabled ? 'Semua Jenis Uji Telah Dipilih' : 'Tambah Jenis Uji';
         }
 
-        function updateTotalHarga() {
+        // hitung subtotal per baris dan total keseluruhan
+        function updateTotalHarga(){
             let total = 0;
-            ujiWrapper.querySelectorAll('select').forEach(select => {
-                const uji = select.value;
-                if (uji && ujiHarga[uji]) total += Number(ujiHarga[uji]);
+            const rows = ujiWrapper.querySelectorAll('.uji-row');
+            rows.forEach(row => {
+                const select = row.querySelector('select');
+                const qtyInput = row.querySelector('input[type="number"]');
+                const qty = Math.max(1, Number(qtyInput.value || 1));
+                const id = select.value;
+                const unit = id && ujiMap[id] ? Number(ujiMap[id].price) : 0;
+                const subtotal = unit * qty;
+                const subtotalEl = row.querySelector('.row-subtotal');
+                if (subtotalEl) subtotalEl.textContent = formatRp(subtotal);
+                total += subtotal;
             });
-            totalHargaDisplay.textContent = `Rp ${total.toLocaleString('id-ID')}`;
-            amountInput.value = total;
+
+            totalHargaDisplay.textContent = formatRp(total);
+            if (amountInput) amountInput.value = total; // hanya referensi, server tetap hitung ulang
         }
 
-        function addUjiEntry() {
-            const div = document.createElement('div');
-            div.className = 'flex items-center gap-3 p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600';
+        // buat 1 baris select + qty + subtotal + remove
+        function createUjiRow(idx){
+            const row = document.createElement('div');
+            row.className = 'uji-row flex items-center gap-3 p-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-600';
+            row.dataset.index = idx;
 
-            const selectWrapper = document.createElement('div');
-            selectWrapper.className = 'flex-1';
-
+            // select wrapper
+            const selectWrap = document.createElement('div');
+            selectWrap.className = 'flex-1';
             const select = document.createElement('select');
-            select.name = `ujis[${ujiIndex}]`;
-            select.className = 'w-full rounded-md border-gray-300 shadow-sm dark:bg-gray-700 dark:text-white focus:border-blue-500 focus:ring focus:ring-blue-300';
-            select.addEventListener('change', () => {
+            select.name = `ujis[${idx}][id]`;
+            select.className = 'w-full rounded-md border-gray-300 dark:bg-gray-700 dark:text-white';
+            select.addEventListener('change', () => { updateUjiDropdownOptions(); updateTotalHarga(); });
+            selectWrap.appendChild(select);
+
+            // qty controls (minus, input, plus)
+            const qtyWrap = document.createElement('div');
+            qtyWrap.className = 'flex items-center gap-2';
+
+            const minus = document.createElement('button');
+            minus.type = 'button';
+            minus.className = 'px-2 py-1 rounded-md border';
+            minus.textContent = '-';
+
+            const qty = document.createElement('input');
+            qty.type = 'number';
+            qty.min = 1;
+            qty.value = 1;
+            qty.name = `ujis[${idx}][quantity]`;
+            qty.className = 'w-20 text-center rounded-md border-gray-300 dark:bg-gray-700 dark:text-white';
+            qty.addEventListener('input', () => {
+                if (qty.value === '' || Number(qty.value) < 1) qty.value = 1;
+                updateTotalHarga();
+            });
+
+            const plus = document.createElement('button');
+            plus.type = 'button';
+            plus.className = 'px-2 py-1 rounded-md border';
+            plus.textContent = '+';
+
+            minus.addEventListener('click', (e) => { e.preventDefault(); qty.value = Math.max(1, (Number(qty.value)||1)-1); updateTotalHarga(); });
+            plus.addEventListener('click', (e) => { e.preventDefault(); qty.value = Math.max(1, (Number(qty.value)||0)+1); updateTotalHarga(); });
+
+            qtyWrap.appendChild(minus);
+            qtyWrap.appendChild(qty);
+            qtyWrap.appendChild(plus);
+
+            // subtotal display
+            const subtotalEl = document.createElement('div');
+            subtotalEl.className = 'row-subtotal w-36 text-right font-medium';
+            subtotalEl.textContent = formatRp(0);
+
+            // remove button
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'w-10 h-10 flex items-center justify-center text-red-500 border rounded-md';
+            remove.textContent = 'X';
+            remove.title = 'Hapus';
+            remove.addEventListener('click', () => {
+                row.remove();
                 updateUjiDropdownOptions();
                 updateTotalHarga();
             });
 
-            const removeBtn = document.createElement('button');
-            removeBtn.type = 'button';
-            removeBtn.className = 'flex-shrink-0 w-10 h-10 flex items-center justify-center text-red-500 hover:text-white hover:bg-red-500 border border-red-300 hover:border-red-500 rounded-lg transition duration-200';
-            removeBtn.innerHTML = 'X';
-            removeBtn.title = 'Hapus jenis uji ini';
-            removeBtn.addEventListener('click', () => {
-                div.remove();
-                updateUjiDropdownOptions();
-                updateTotalHarga();
-            });
+            row.appendChild(selectWrap);
+            row.appendChild(qtyWrap);
+            row.appendChild(subtotalEl);
+            row.appendChild(remove);
 
-            selectWrapper.appendChild(select);
-            div.appendChild(selectWrapper);
-            div.appendChild(removeBtn);
-            ujiWrapper.appendChild(div);
+            return row;
+        }
 
+        function addUjiEntry(){
+            const r = createUjiRow(ujiIndex++);
+            ujiWrapper.appendChild(r);
             updateUjiDropdownOptions();
             updateTotalHarga();
-
-            ujiIndex++;
         }
 
+        // init
         addUjiBtn.addEventListener('click', addUjiEntry);
-        addUjiEntry(); // default 1 input
+        addUjiEntry(); // 1 baris default
 
-        // NOTE: Litepicker init removed because user no longer sets test_date here.
-
-        // Validasi sebelum submit (tidak lagi memaksa test_date)
-        document.getElementById('order-uji-form').addEventListener('submit', function(e) {
-            // Pastikan minimal 1 uji dipilih dan valid
-            const selectedTests = Array.from(ujiWrapper.querySelectorAll('select')).filter(s => s.value);
-            if (selectedTests.length === 0) {
-                alert('Pilih minimal 1 jenis uji!');
-                e.preventDefault();
-                return false;
-            }
-
-            updateTotalHarga();
-
-            // Konfirmasi sebelum submit
-            const total = totalHargaDisplay.textContent;
-            if (!confirm(`Konfirmasi pesanan dengan total biaya ${total}?`)) {
-                e.preventDefault();
-                return false;
-            }
-        });
+        // validasi form dan final confirm
+        const form = document.getElementById('order-uji-form');
+        if (form){
+            form.addEventListener('submit', function(e){
+                const rows = Array.from(ujiWrapper.querySelectorAll('.uji-row'));
+                const valid = rows.some(r => r.querySelector('select').value);
+                if (!valid){
+                    alert('Pilih minimal 1 jenis uji!');
+                    e.preventDefault();
+                    return false;
+                }
+                updateTotalHarga();
+                if (!confirm(`Konfirmasi pesanan dengan total biaya ${totalHargaDisplay.textContent}?`)){
+                    e.preventDefault();
+                    return false;
+                }
+            });
+        }
     </script>
 </x-app-layout>

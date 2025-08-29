@@ -104,63 +104,19 @@
                                 </div>
                             </div>
 
-                            {{-- Tanggal Uji (jika ada item Uji) atau Tanggal Mulai/Selesai --}}
-                            @php
-                                // detect apakah ada item tipe Uji
-                                $hasUji = $order->items->contains(function($i) {
-                                    return ($i->type ?? '') === 'Uji';
-                                });
-
-                                // prioritas tanggal uji: order->test_start -> rental_start item Uji pertama
-                                $ujiDate = $order->test_start ?? null;
-                                if (!$ujiDate && $hasUji) {
-                                    $firstUji = $order->items->firstWhere('type', 'Uji');
-                                    $ujiDate = $firstUji->rental_start ?? null;
-                                }
-                            @endphp
-
-                            @if($hasUji)
-                                <div class="p-4 border border-gray-100 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900/60 mb-2">
-                                    <h5 class="text-sm text-gray-500 dark:text-gray-300">Tanggal Uji</h5>
-                                    <p class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-100">
-                                        @if($ujiDate)
-                                            {{ \Carbon\Carbon::parse($ujiDate)->format('d M Y') }}
-                                        @else
-                                            -
-                                        @endif
-                                    </p>
-                                </div>
-                            @else
-                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    <div class="p-4 border border-gray-100 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900/60">
-                                        <h5 class="text-sm text-gray-500 dark:text-gray-300">Tanggal Mulai</h5>
-                                        <p class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-100">
-                                            @if($order->test_start)
-                                                {{ \Carbon\Carbon::parse($order->test_start)->format('d M Y') }}
-                                            @else
-                                                -
-                                            @endif
-                                        </p>
-                                    </div>
-
-                                    <div class="p-4 border border-gray-100 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900/60">
-                                        <h5 class="text-sm text-gray-500 dark:text-gray-300">Tanggal Selesai</h5>
-                                        <p class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-100">
-                                            @if($order->test_end)
-                                                {{ \Carbon\Carbon::parse($order->test_end)->format('d M Y') }}
-                                            @else
-                                                -
-                                            @endif
-                                        </p>
-                                    </div>
-                                </div>
-                            @endif
-
                             <div class="mt-2">
                                 <h5 class="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Rincian Item</h5>
 
+                                {{-- Rincian items with lokasi + inline edit --}}
                                 <div class="space-y-2">
                                     @foreach($order->items as $idx => $item)
+                                        @php
+                                            // konsisten nama field lokasi (sesuaikan jika di model nama field berbeda)
+                                            $lokasi = $item->location ?? $item->lokasi ?? '-';
+                                            // route untuk update item lokasi (sesuaikan nama route di web.php jika berbeda)
+                                            $updateRoute = route('user.order.item.update', ['id' => $order->id, 'item' => $item->id]);
+                                        @endphp
+
                                         <details class="group bg-gray-50 dark:bg-gray-900/60 p-4 rounded-lg border border-gray-100 dark:border-gray-700">
                                             <summary class="flex items-center justify-between cursor-pointer">
                                                 <div class="flex items-center gap-3 min-w-0">
@@ -169,7 +125,19 @@
                                                     </div>
                                                     <div class="truncate">
                                                         <div class="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">{{ $item->name }}</div>
-                                                        <div class="text-xs text-gray-500 dark:text-gray-300"> {{ $item->type }} • Jumlah: {{ $item->quantity }}</div>
+                                                        <div class="text-xs text-gray-500 dark:text-gray-300">
+                                                            {{ $item->type }} •
+                                                            @if(($item->type ?? '') === 'Sewa')
+                                                                Durasi:
+                                                                @if($item->rental_start && $item->rental_end)
+                                                                    {{ \Carbon\Carbon::parse($item->rental_start)->diffInDays(\Carbon\Carbon::parse($item->rental_end)) + 1 }} hari
+                                                                @else
+                                                                    -
+                                                                @endif
+                                                            @else
+                                                                Jumlah: {{ $item->quantity }} pcs
+                                                            @endif
+                                                        </div>
                                                     </div>
                                                 </div>
 
@@ -184,10 +152,16 @@
                                                 </div>
                                             </summary>
 
-                                            <div class="mt-3 text-sm text-gray-600 dark:text-gray-300">
+                                            <div class="mt-3 text-sm text-gray-600 dark:text-gray-300 space-y-2">
                                                 @if(($item->type ?? '') === 'Sewa')
                                                     <p><strong>Periode:</strong>
-                                                        {{ $item->rental_start ?? '-' }} — {{ $item->rental_end ?? '-' }}
+                                                        @if($item->rental_start && $item->rental_end)
+                                                            {{ \Carbon\Carbon::parse($item->rental_start)->format('d M Y') }}
+                                                            —
+                                                            {{ \Carbon\Carbon::parse($item->rental_end)->format('d M Y') }}
+                                                        @else
+                                                            -
+                                                        @endif
                                                     </p>
                                                     <p><strong>Durasi hari:</strong>
                                                         @if($item->rental_start && $item->rental_end)
@@ -196,9 +170,42 @@
                                                             -
                                                         @endif
                                                     </p>
+
+                                                    {{-- LOKASI: tampilkan + tombol edit --}}
+                                                    <div class="flex flex-col md:flex-row md:items-center md:gap-4">
+                                                        <div id="lokasi-view-{{ $idx }}" class="flex-1">
+                                                            <p class="text-sm text-gray-700 dark:text-gray-200"><strong>Lokasi:</strong> <span class="lokasi-text">{{ $lokasi }}</span></p>
+                                                        </div>
+
+                                                        <div class="mt-2 md:mt-0 flex items-center gap-2">
+                                                            <!-- Tombol edit (JS) -->
+                                                            <button type="button"
+                                                                class="edit-lokasi-btn inline-flex items-center px-2 py-1 text-xs border rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
+                                                                data-route="{{ $updateRoute }}"
+                                                                data-idx="{{ $idx }}"
+                                                                aria-expanded="false"
+                                                                title="Edit lokasi">
+                                                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5" />
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                                                </svg>
+                                                                Edit Lokasi
+                                                            </button>
+
+                                                            <!-- Fallback form (non-JS). Hidden by default but works if submitted -->
+                                                            <form id="lokasi-form-{{ $idx }}" action="{{ $updateRoute }}" method="POST" class="lokasi-edit hidden" data-idx="{{ $idx }}">
+                                                                @csrf
+                                                                @method('PATCH')
+                                                                <div class="flex items-center gap-2">
+                                                                    <input type="text" name="lokasi" value="{{ $lokasi }}" class="rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white px-2 py-1 text-sm" />
+                                                                    <button type="submit" class="px-2 py-1 bg-blue-600 text-white rounded-md text-sm">Simpan</button>
+                                                                    <button type="button" class="cancel-lokasi-btn px-2 py-1 border rounded-md text-sm">Batal</button>
+                                                                </div>
+                                                            </form>
+                                                        </div>
+                                                    </div>
                                                 @elseif(($item->type ?? '') === 'Uji')
                                                     @php
-                                                        // tanggal uji per-item: prioritas item->rental_start -> order->test_start
                                                         $itemUjiDate = $item->rental_start ?? $order->test_start ?? null;
                                                     @endphp
                                                     <p><strong>Tanggal Uji:</strong>
@@ -281,6 +288,97 @@
                 setTimeout(() => { btn.innerHTML = prev; }, 1800);
             }).catch(()=> {
                 alert('Gagal menyalin. Silakan salin manual.');
+            });
+        });
+    </script>
+
+    {{-- Script untuk toggle + AJAX update lokasi per item --}}
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const csrf = '{{ csrf_token() }}';
+
+            // buka form edit inline
+            document.querySelectorAll('.edit-lokasi-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const idx = btn.dataset.idx;
+                    const form = document.getElementById('lokasi-form-' + idx);
+                    const view = document.getElementById('lokasi-view-' + idx);
+                    if (!form || !view) return;
+
+                    // toggle visibility
+                    form.classList.remove('hidden');
+                    view.classList.add('hidden');
+                    btn.setAttribute('aria-expanded','true');
+                });
+            });
+
+            // cancel edit
+            document.querySelectorAll('.cancel-lokasi-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const form = btn.closest('.lokasi-edit');
+                    if (!form) return;
+                    const idx = form.dataset.idx;
+                    const view = document.getElementById('lokasi-view-' + idx);
+                    form.classList.add('hidden');
+                    if (view) view.classList.remove('hidden');
+                });
+            });
+
+            // submit via AJAX (progressive enhancement)
+            document.querySelectorAll('form.lokasi-edit').forEach(form => {
+                form.addEventListener('submit', async function (ev) {
+                    ev.preventDefault();
+                    const idx = form.dataset.idx;
+                    const route = form.action;
+                    const input = form.querySelector('input[name="lokasi"]');
+                    if (!input) return;
+                    const newLokasi = input.value.trim();
+
+                    // basic client-side validation
+                    if (newLokasi === '') {
+                        alert('Lokasi tidak boleh kosong');
+                        return;
+                    }
+
+                    try {
+                        const res = await fetch(route, {
+                            method: 'PATCH',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': csrf,
+                                'Accept': 'application/json'
+                            },
+                            body: JSON.stringify({ lokasi: newLokasi })
+                        });
+
+                        if (!res.ok) {
+                            // fallback: jika server menolak karena CSRF/500, submit form biasa
+                            if (res.status === 419 || res.status === 500) {
+                                form.removeEventListener('submit', arguments.callee);
+                                form.submit();
+                                return;
+                            }
+                            const err = await res.json().catch(()=>({ message: 'Gagal menyimpan.' }));
+                            alert(err.message || 'Gagal menyimpan lokasi.');
+                            return;
+                        }
+
+                        const data = await res.json().catch(()=>({ success: true, lokasi: newLokasi }));
+                        // update UI
+                        const view = document.getElementById('lokasi-view-' + idx);
+                        if (view) {
+                            const textEl = view.querySelector('.lokasi-text');
+                            if (textEl) textEl.textContent = data.lokasi ?? newLokasi;
+                            view.classList.remove('hidden');
+                        }
+                        form.classList.add('hidden');
+                    } catch (err) {
+                        console.error(err);
+                        // fallback to normal form submit if network error
+                        form.removeEventListener('submit', arguments.callee);
+                        form.submit();
+                    }
+                });
             });
         });
     </script>

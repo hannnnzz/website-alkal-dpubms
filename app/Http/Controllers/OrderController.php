@@ -14,12 +14,13 @@ use App\Models\AlatSewaType;
 use App\Models\OrderItem;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class OrderController extends Controller
 {
     public function createuji()
     {
-        $ujis = UjiType::pluck('price', 'name'); // ['Nama Uji' => harga]
+        $ujis = UjiType::all()->keyBy('id');
         return view('user.order.createuji', compact('ujis'));
     }
 
@@ -37,7 +38,6 @@ class OrderController extends Controller
         return view('user.order.createsewa', compact('alats'));
     }
 
-
     // STORE UJI
     public function storeuji(Request $req)
     {
@@ -45,6 +45,9 @@ class OrderController extends Controller
             'provider_name'    => 'required|string',
             'customer_contact' => 'required|string',
             'ujis'             => 'required|array|min:1',
+            // longgar: boleh nullable di sini, kita filter setelahnya
+            'ujis.*.id'        => 'nullable',
+            'ujis.*.quantity'  => 'nullable|integer|min:1',
             'file_upload'      => 'nullable|file',
             'tanggal_masuk'    => 'nullable|date',
             'tanggal_surat'    => 'nullable|date',
@@ -70,41 +73,36 @@ class OrderController extends Controller
             $order->amount           = 0;
             $order->status           = 'UNPAID';
 
-            // ====== Tanggal Masuk ======
+            // tanggal_masuk
             if ($req->filled('tanggal_masuk') && Schema::hasColumn('orders', 'tanggal_masuk')) {
                 $order->tanggal_masuk = Carbon::parse($req->tanggal_masuk)->toDateTimeString();
             } elseif (Schema::hasColumn('orders', 'tanggal_masuk')) {
                 $order->tanggal_masuk = Carbon::now()->toDateTimeString();
             }
 
-            // ====== Kolom Administratif ======
+            // administrasi lain
             if ($req->filled('tanggal_surat') && Schema::hasColumn('orders', 'tanggal_surat')) {
                 $order->tanggal_surat = Carbon::parse($req->tanggal_surat)->toDateString();
             }
-
             if ($req->filled('no_surat') && Schema::hasColumn('orders', 'no_surat')) {
                 $order->no_surat = $req->no_surat;
             }
-
             if ($req->filled('alamat_pengirim') && Schema::hasColumn('orders', 'alamat_pengirim')) {
                 $order->alamat_pengirim = $req->alamat_pengirim;
             }
-
             if ($req->filled('perihal') && Schema::hasColumn('orders', 'perihal')) {
                 $order->perihal = $req->perihal;
             }
-
             if ($req->filled('disposisi') && Schema::hasColumn('orders', 'disposisi')) {
                 $order->disposisi = $req->disposisi;
             } elseif (Schema::hasColumn('orders', 'disposisi')) {
                 $order->disposisi = 'Laboratorium';
             }
-
             if ($req->filled('deskripsi_paket_pekerjaan') && Schema::hasColumn('orders', 'deskripsi_paket_pekerjaan')) {
                 $order->deskripsi_paket_pekerjaan = $req->deskripsi_paket_pekerjaan;
             }
 
-            // ====== Hari ======
+            // hari otomatis (jika kolom ada)
             if (Schema::hasColumn('orders', 'hari')) {
                 try {
                     if (!empty($order->tanggal_masuk)) {
@@ -117,23 +115,73 @@ class OrderController extends Controller
 
             $order->save();
 
-            // ====== Items Uji ======
-            $ujiTypes = UjiType::whereIn('name', $req->ujis)->get();
-            $total = 0;
+            // ====== Proses ujis (toleran terhadap baris kosong dari frontend) ======
+            $rawUjis = $req->input('ujis', []);
+            // Filter entri yang valid: harus punya id (non-empty) — id bisa datang sebagai string angka
+            $filtered = array_values(array_filter($rawUjis, function($entry){
+                return isset($entry['id']) && $entry['id'] !== '' && $entry['id'] !== null;
+            }));
 
-            foreach ($ujiTypes as $uji) {
-                $order->items()->create([
-                    'type'         => 'Uji',
-                    'name'         => $uji->name,
-                    'quantity'     => 1,
-                    'price'        => $uji->price,
-                    'rental_start' => null, // admin isi nanti
-                    'rental_end'   => null, // admin isi nanti
-                ]);
-                $total += $uji->price;
+            if (count($filtered) === 0) {
+                DB::rollBack();
+                return back()->withErrors('Pilih minimal 1 jenis uji yang valid.')->withInput();
             }
 
-            // ====== Update amount ======
+            // normalisasi: cast id -> int, qty -> int minimal 1
+            $normalized = array_map(function($e){
+                return [
+                    'id' => intval($e['id']),
+                    'quantity' => isset($e['quantity']) ? max(1, intval($e['quantity'])) : 1,
+                ];
+            }, $filtered);
+
+            // ambil id unik untuk query batch
+            $ids = array_values(array_unique(array_map(function($r){ return $r['id']; }, $normalized)));
+
+            $ujiMap = UjiType::whereIn('id', $ids)->get()->keyBy('id');
+
+            $itemsToCreate = [];
+            $total = 0;
+
+            foreach ($normalized as $idx => $entry) {
+                $ujiId = $entry['id'];
+                $qty = $entry['quantity'];
+
+                if (!isset($ujiMap[$ujiId])) {
+                    DB::rollBack();
+                    return back()->withErrors("Jenis uji dengan ID {$ujiId} tidak ditemukan.")->withInput();
+                }
+
+                $uji = $ujiMap[$ujiId];
+                $unitPrice = intval($uji->price); // harga per uji
+                $subtotal = $unitPrice * $qty;
+                $total += $subtotal;
+
+                $itemPayload = [
+                    'type' => 'Uji',
+                    'name' => $uji->name,
+                    'quantity' => $qty,
+                    // SIMPAN price sebagai subtotal (sesuai briefing)
+                    'price' => $subtotal,
+                    'rental_start' => null,
+                    'rental_end' => null,
+                ];
+
+                // jika tabel items punya kolom unit_price, simpan juga
+                $itemsTable = $order->items()->getRelated()->getTable();
+                if (Schema::hasColumn($itemsTable, 'unit_price')) {
+                    $itemPayload['unit_price'] = $unitPrice;
+                }
+
+                $itemsToCreate[] = $itemPayload;
+            }
+
+            // Simpan items ke DB (per item)
+            foreach ($itemsToCreate as $it) {
+                $order->items()->create($it);
+            }
+
+            // Update total di orders (server-side authoritative)
             if (Schema::hasColumn('orders', 'amount')) {
                 $order->update(['amount' => $total]);
             } else {
@@ -151,9 +199,7 @@ class OrderController extends Controller
         }
     }
 
-
     //STORE SEWA
-
     public function storesewa(Request $req)
     {
         $req->validate([
@@ -163,6 +209,7 @@ class OrderController extends Controller
             'sewa'             => 'required|array|min:1',
             'sewa.*.alat'      => 'required|string',
             'sewa.*.tanggal'   => 'required|string', // "2025-08-10 - 2025-08-15"
+            'sewa.*.lokasi'    => 'nullable|string|max:255', // baru: lokasi opsional
         ]);
 
         $path = $req->file('file_upload') ? $req->file('file_upload')->store('uploads', 'public') : null;
@@ -174,6 +221,7 @@ class OrderController extends Controller
                 'has_test_date' => Schema::hasColumn('orders', 'test_date'),
                 'has_test_start' => Schema::hasColumn('orders', 'test_start'),
                 'has_test_end' => Schema::hasColumn('orders', 'test_end'),
+                'has_order_items_lokasi' => Schema::hasColumn('order_items', 'lokasi'),
             ]);
         } catch (\Throwable $e) {
             // ignore
@@ -191,21 +239,17 @@ class OrderController extends Controller
             $order->amount           = 0;
             $order->status           = 'UNPAID';
 
-            // Ambil test_start/test_end dari sewa[0] (parse dengan Carbon)
+            // Ambil test_start/test_end dari sewa[0] (parse dengan Carbon) — tetap seperti mu
             [$startFirstRaw, $endFirstRaw] = explode(' - ', $req->sewa[0]['tanggal']);
             $startFirst = Carbon::parse($startFirstRaw)->toDateString();
             $endFirst   = Carbon::parse($endFirstRaw)->toDateString();
 
-            // UNTUK CASE SEWA: simpan ke test_start/test_end (jika kolom ada).
-            // Jika test_start tidak ada tapi test_date ada di tabel, simpan ke test_date.
-            // Jika keduanya tidak ada, fallback ke tanggal_masuk.
             if (Schema::hasColumn('orders', 'test_start')) {
                 $order->test_start = $startFirst;
                 if (Schema::hasColumn('orders', 'test_end')) {
                     $order->test_end = $endFirst;
                 }
             } elseif (Schema::hasColumn('orders', 'test_date')) {
-                // meskipun kamu bilang createsewa tidak punya test_date, ini fallback aman
                 $order->test_date = $startFirst;
             } elseif (Schema::hasColumn('orders', 'tanggal_masuk')) {
                 $order->tanggal_masuk = Carbon::parse($startFirst)->toDateTimeString();
@@ -215,11 +259,10 @@ class OrderController extends Controller
             if ($req->filled('tanggal_masuk') && Schema::hasColumn('orders', 'tanggal_masuk')) {
                 $order->tanggal_masuk = Carbon::parse($req->tanggal_masuk)->toDateTimeString();
             } elseif (Schema::hasColumn('orders', 'tanggal_masuk') && empty($order->tanggal_masuk)) {
-                // jika kolom ada tapi belum di-set, gunakan now
                 $order->tanggal_masuk = Carbon::now()->toDateTimeString();
             }
 
-            // optional administratif lain (cek column sebelum assignment)
+            // administratif lain (tetap seperti semula)
             if ($req->filled('tanggal_surat') && Schema::hasColumn('orders', 'tanggal_surat')) {
                 $order->tanggal_surat = Carbon::parse($req->tanggal_surat)->toDateString();
             } elseif (Schema::hasColumn('orders', 'tanggal_surat') && empty($order->tanggal_surat)) {
@@ -256,7 +299,7 @@ class OrderController extends Controller
                 $order->deskripsi_paket_pekerjaan = $order->deskripsi_paket_pekerjaan ?? '-';
             }
 
-            // hari: generate jika kolom ada
+            // hari: generate jika kolom ada (tetap seperti semula)
             if (Schema::hasColumn('orders', 'hari')) {
                 if ($req->filled('hari')) {
                     $order->hari = $req->hari;
@@ -281,6 +324,9 @@ class OrderController extends Controller
 
             $total = 0;
 
+            // apakah tabel order_items punya kolom 'lokasi' ?
+            $hasLokasiColumn = Schema::hasColumn('order_items', 'lokasi');
+
             foreach ($req->sewa as $s) {
                 $alatName = $s['alat'];
 
@@ -304,13 +350,18 @@ class OrderController extends Controller
                 }
                 // ===== END: pemeriksaan is_locked / locked_until =====
 
-                // parse tanggal untuk item ini
-                [$startDateRaw, $endDateRaw] = explode(' - ', $s['tanggal']);
-                $start = Carbon::parse($startDateRaw)->startOfDay();
-                $end   = Carbon::parse($endDateRaw)->endOfDay();
+                // parse tanggal untuk item ini (aman)
+                $parts = array_map('trim', explode(' - ', $s['tanggal'], 2));
+                try {
+                    $start = Carbon::parse($parts[0])->startOfDay();
+                    $end   = isset($parts[1]) ? Carbon::parse($parts[1])->endOfDay() : Carbon::parse($parts[0])->endOfDay();
+                } catch (\Exception $e) {
+                    DB::rollBack();
+                    return back()->withErrors("Format tanggal tidak valid untuk alat {$alatName}.");
+                }
                 $durasi = $start->diffInDays($end) + 1;
 
-                // ---- Sederhanakan cek overlap ----
+                // ---- Cek overlap (menggunakan kolom rental_start/rental_end pada order_items seperti sebelumnya) ----
                 $overlap = OrderItem::where('alat_id', $alat->id)
                     ->whereHas('order', function($q) {
                         $q->whereIn('status', ['PENDING', 'PAID']);
@@ -324,9 +375,11 @@ class OrderController extends Controller
                     return back()->withErrors("Alat {$alat->name} sudah dipesan pada rentang tanggal tersebut.");
                 }
 
+                // hitung price (sesuai logic kamu)
                 $price = $alat->price * $durasi;
 
-                $order->items()->create([
+                // siapkan payload item; hanya sertakan 'lokasi' jika kolom memang ada
+                $itemPayload = [
                     'type' => 'Sewa',
                     'alat_id' => $alat->id,
                     'name' => $alat->name,
@@ -334,7 +387,14 @@ class OrderController extends Controller
                     'rental_start' => $start->toDateString(),
                     'rental_end' => $end->toDateString(),
                     'price' => $price,
-                ]);
+                ];
+
+                if ($hasLokasiColumn) {
+                    // gunakan nilai lokasi dari request (boleh kosong)
+                    $itemPayload['lokasi'] = isset($s['lokasi']) ? $s['lokasi'] : null;
+                }
+
+                $order->items()->create($itemPayload);
 
                 $total += $price;
             }
@@ -575,6 +635,83 @@ class OrderController extends Controller
                 ->setPaper('a4', 'portrait');
 
         return $pdf->stream('invoice-'.$order->order_id.'.pdf');
+    }
+
+    public function updateItem(Request $request, $orderParam, $itemId)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return $request->wantsJson()
+                ? response()->json(['message' => 'Unauthorized'], Response::HTTP_UNAUTHORIZED)
+                : abort(403, 'Unauthorized');
+        }
+
+        $order = Order::where('id', $orderParam)
+                    ->orWhere('order_id', $orderParam)
+                    ->first();
+
+        if (!$order) {
+            if ($request->wantsJson()) {
+                return response()->json(['message' => 'Order tidak ditemukan'], Response::HTTP_NOT_FOUND);
+            }
+            abort(404, 'Order tidak ditemukan.');
+        }
+
+        if ($user->role !== 'admin' && $order->user_id !== $user->id) {
+            if ($request->wantsJson()) {
+                return response()->json(['message' => 'Forbidden'], Response::HTTP_FORBIDDEN);
+            }
+            abort(403, 'Anda tidak diizinkan mengubah item ini.');
+        }
+
+        $item = $order->items()->where('id', $itemId)->first();
+        if (!$item) {
+            if ($request->wantsJson()) {
+                return response()->json(['message' => 'Item tidak ditemukan'], Response::HTTP_NOT_FOUND);
+            }
+            abort(404, 'Item tidak ditemukan.');
+        }
+
+        $validator = Validator::make($request->all(), [
+            'lokasi' => ['required', 'string', 'max:500'],
+        ]);
+
+        if ($validator->fails()) {
+            if ($request->wantsJson()) {
+                return response()->json(['message' => 'Validasi gagal', 'errors' => $validator->errors()], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+            return redirect()->back()->withErrors($validator)->withInput();
+        }
+
+        $newLokasi = $request->input('lokasi');
+
+        // 6) cari nama kolom lokasi di tabel item (lokasi / location / place)
+        $table = $item->getTable();
+        $kolom = null;
+        if (Schema::hasColumn($table, 'lokasi')) {
+            $kolom = 'lokasi';
+        } elseif (Schema::hasColumn($table, 'location')) {
+            $kolom = 'location';
+        } elseif (Schema::hasColumn($table, 'place')) {
+            $kolom = 'place';
+        }
+
+        if (!$kolom) {
+            if ($request->wantsJson()) {
+                return response()->json(['message' => 'Kolom lokasi tidak ditemukan di database'], Response::HTTP_INTERNAL_SERVER_ERROR);
+            }
+            return redirect()->back()->with('error', 'Kolom lokasi tidak ditemukan di database.');
+        }
+
+        // 7) simpan
+        $item->$kolom = $newLokasi;
+        $item->save();
+
+        // 8) kembalikan response (AJAX or redirect)
+        if ($request->wantsJson()) {
+            return response()->json(['success' => true, 'lokasi' => $newLokasi]);
+        }
+        return redirect()->back()->with('success', 'Lokasi item berhasil diperbarui.');
     }
 
 }
